@@ -16,6 +16,11 @@ import fgivenx
 import fgivenx.plot
 import nestcheck.error_analysis
 import nestcheck.ns_run_utils
+# getdist 
+from getdist import MCSamples
+import my_python_package as mpp
+from scipy.integrate import simps
+from scipy.interpolate import InterpolatedUnivariateSpline as ius
 
 
 def plot_run_nlive(method_names, run_dict, **kwargs):
@@ -272,6 +277,9 @@ def bs_param_dists(run_list, **kwargs):
     tqdm_kwargs: dict, optional
         Keyword arguments to pass to the tqdm progress bar when it is used in
         fgivenx while plotting contours.
+    kde : str
+        Method of kde to use. If 'getdit', then getdist, which use fft, will be used.
+        If 'nestcheck', then built-in kde in nestcheck will be used.
 
     Returns
     -------
@@ -291,6 +299,7 @@ def bs_param_dists(run_list, **kwargs):
     parallel = kwargs.pop('parallel', True)
     rasterize_contours = kwargs.pop('rasterize_contours', True)
     tqdm_kwargs = kwargs.pop('tqdm_kwargs', {'disable': True})
+    kde = kwargs.pop('kde', 'getdist')
     if kwargs:
         raise TypeError('Unexpected **kwargs: {0}'.format(kwargs))
     # Use random seed to make samples consistent and allow caching.
@@ -303,9 +312,9 @@ def bs_param_dists(run_list, **kwargs):
         'There should be the same number of axes and labels')
     width_ratios = [40] * len(fthetas) + [1] * len(run_list)
     fig, axes = plt.subplots(nrows=1, ncols=len(run_list) + len(fthetas),
-                             gridspec_kw={'wspace': 0.1,
-                                          'width_ratios': width_ratios},
-                             figsize=figsize)
+                            gridspec_kw={'wspace': 0.1,
+                                        'width_ratios': width_ratios},
+                            figsize=figsize)
     colormaps = ['Reds_r', 'Blues_r', 'Greys_r', 'Greens_r', 'Oranges_r']
     mean_colors = ['darkred', 'darkblue', 'darkgrey', 'darkgreen',
                    'darkorange']
@@ -323,7 +332,8 @@ def bs_param_dists(run_list, **kwargs):
                              rasterize_contours=rasterize_contours,
                              mean_color=mean_colors[nrun],
                              colormap=colormaps[nrun],
-                             tqdm_kwargs=tqdm_kwargs)
+                             tqdm_kwargs=tqdm_kwargs,
+                             kde=kde)
         # add colorbar
         colorbar_plot = plt.colorbar(cbar, cax=axes[len(fthetas) + nrun],
                                      ticks=[1, 2, 3])
@@ -398,6 +408,9 @@ def param_logx_diagram(run_list, **kwargs):
     tqdm_kwargs: dict, optional
         Keyword arguments to pass to the tqdm progress bar when it is used in
         fgivenx while plotting contours.
+    kde : str
+        Method of kde to use. If 'getdit', then getdist, which use fft, will be used.
+        If 'nestcheck', then built-in kde in nestcheck will be used.
 
     Returns
     -------
@@ -417,6 +430,8 @@ def param_logx_diagram(run_list, **kwargs):
     colors = kwargs.pop('colors', ['red', 'blue', 'grey', 'green', 'orange'])
     colormaps = kwargs.pop('colormaps', ['Reds_r', 'Blues_r', 'Greys_r',
                                          'Greens_r', 'Oranges_r'])
+    fig = kwargs.pop('fig', None)
+    axes = kwargs.pop('axes', None)
     # Options for fgivenx
     cache_in = kwargs.pop('cache', None)
     parallel = kwargs.pop('parallel', True)
@@ -425,6 +440,7 @@ def param_logx_diagram(run_list, **kwargs):
     thin = kwargs.pop('thin', 1)
     npoints = kwargs.pop('npoints', 100)
     tqdm_kwargs = kwargs.pop('tqdm_kwargs', {'disable': True})
+    kde = kwargs.pop('kde', 'getdist')
     if kwargs:
         raise TypeError('Unexpected **kwargs: {0}'.format(kwargs))
     if not isinstance(run_list, list):
@@ -445,9 +461,9 @@ def param_logx_diagram(run_list, **kwargs):
     # make figure
     # -----------
     fig, axes = plt.subplots(nrows=1 + len(fthetas), ncols=2, figsize=figsize,
-                             gridspec_kw={'wspace': 0,
-                                          'hspace': 0,
-                                          'width_ratios': [15, 40]})
+                            gridspec_kw={'wspace': 0,
+                                        'hspace': 0,
+                                        'width_ratios': [15, 40]})
     # make colorbar axes in top left corner
     axes[0, 0].set_visible(False)
     divider = mpl_toolkits.axes_grid1.make_axes_locatable(axes[0, 0])
@@ -540,7 +556,7 @@ def param_logx_diagram(run_list, **kwargs):
                           cache=cache_in, nx=npoints, ny=ny_posterior,
                           colormap=colormaps[nrun],
                           mean_color=mean_colors[nrun],
-                          parallel=parallel, tqdm_kwargs=tqdm_kwargs)
+                          parallel=parallel, tqdm_kwargs=tqdm_kwargs, kde=kde)
         # Plot means onto scatter plot
         # ----------------------------
         if plot_means:
@@ -617,6 +633,9 @@ def plot_bs_dists(run, fthetas, axes, **kwargs):
     tqdm_kwargs: dict, optional
         Keyword arguments to pass to the tqdm progress bar when it is used in
         fgivenx while plotting contours.
+    kde : str
+        Method of kde to use. If 'getdit', then getdist, which use fft, will be used.
+        If 'nestcheck', then built-in kde in nestcheck will be used.
 
     Returns
     -------
@@ -635,6 +654,7 @@ def plot_bs_dists(run, fthetas, axes, **kwargs):
     smooth = kwargs.pop('smooth', False)
     flip_axes = kwargs.pop('flip_axes', False)
     tqdm_kwargs = kwargs.pop('tqdm_kwargs', {'leave': False})
+    kde = kwargs.pop('kde', 'getdist')
     if kwargs:
         raise TypeError('Unexpected **kwargs: {0}'.format(kwargs))
     assert len(fthetas) == len(axes), \
@@ -663,8 +683,12 @@ def plot_bs_dists(run, fthetas, axes, **kwargs):
             cache = cache_in + '_' + str(nf)
         except TypeError:
             cache = None
+        if kde == 'getdist':
+            func = weighted_1d_gaussian_kde_getdist
+        else:
+            func = weighted_1d_gaussian_kde
         samp_kde = functools.partial(alternate_helper,
-                                     func=weighted_1d_gaussian_kde)
+                                     func=func)
         y, pmf = fgivenx.drivers.compute_pmf(
             samp_kde, ftheta_vals, samples_array, ny=ny, cache=cache,
             parallel=parallel, tqdm_kwargs=tqdm_kwargs)
@@ -701,6 +725,13 @@ def alternate_helper(x, alt_samps, func=None):
     arg2 = alt_samps[1::2]
     return func(x, arg1, arg2)
 
+def weighted_1d_gaussian_kde_getdist(x, samples, weights, silent=True):
+    s = mpp.utility.silencer(silent)
+    s.start()
+    mcs = MCSamples(samples=samples, names=['p'], weights=weights)
+    s.end()
+    d = mcs.get1DDensity('p')
+    return ius(d.x, d.P*d.norm_integral())(x)
 
 def weighted_1d_gaussian_kde(x, samples, weights):
     """Gaussian kde with weighted samples (1d only). Uses Scott bandwidth
